@@ -50,7 +50,7 @@ Note: Paths can be overridden with env vars: `CODEXENV_ROOT` (default `~/.codex-
 
 ## Commands
 
-- `codexenv init [name] [--npm-install] [--npm-binary npm] [--npm-package @openai/codex] [--force-npm]`: Initialize management. Migrates an existing `~/.codex` into env `[name]` (default `global`), sets it as global, and makes `~/.codex` a symlink. With `--npm-install`, runs `npm install -g @openai/codex` (configurable via flags/env vars).
+- `codexenv init [name] [--npm-install] [--npm-binary npm] [--npm-package @openai/codex] [--force-npm]`: Initialize management. Migrates an existing `~/.codex` into env `[name]` (default `global`), sets it as global, and makes `~/.codex` a symlink. With `--npm-install`, runs `npm install -g @openai/codex` (configurable via flags/env vars). You can choose any name; if you later change your mind, use `codexenv rename`.
 - `codexenv list`: List environments; `*` marks the env active for the current directory.
 - `codexenv global [name]`: Show or set the global env.
 - `codexenv local [name] [--unset] [--apply]`: Show or set `.codexenv-local` in the current directory; `--apply` immediately updates `~/.codex`.
@@ -58,6 +58,7 @@ Note: Paths can be overridden with env vars: `CODEXENV_ROOT` (default `~/.codex-
 - `codexenv delete <name> [--yes]`: Delete an env. If it's the last env, `--yes` restores files to a physical `~/.codex` to ensure Codex CLI still works.
 - `codexenv resolve`: Print the effective env name for the current directory.
 - `codexenv apply-symlink`: Ensure `~/.codex` symlink matches the effective env. Used by shell integration.
+- `codexenv rename <old> <new>`: Rename an environment directory from `<old>` to `<new>`. If `<old>` was the global env, the global is updated, and the `~/.codex` symlink is refreshed if it pointed to `<old>`.
 
 ## Behavior
 

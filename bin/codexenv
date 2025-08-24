@@ -384,6 +384,38 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_rename(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+    old = args.old
+    new = args.new
+    src = p.env_path(old)
+    dst = p.env_path(new)
+    if not src.exists():
+        print(f"{APP_NAME}: env '{old}' does not exist.", file=sys.stderr)
+        return 2
+    if dst.exists():
+        print(f"{APP_NAME}: destination env '{new}' already exists.", file=sys.stderr)
+        return 4
+    was_global = read_global_env(p) == old
+    # Capture whether symlink currently points to the env being renamed
+    link_was_old = symlink_points_to(p.codex_home, src)
+    try:
+        src.rename(dst)
+    except Exception as e:
+        print(f"{APP_NAME}: failed to rename '{old}' to '{new}': {e}", file=sys.stderr)
+        return 1
+    if was_global:
+        write_global_env(p, new)
+    if link_was_old:
+        update_codex_symlink(p, new, quiet=args.quiet)
+    if not args.quiet:
+        print(f"Renamed env '{old}' to '{new}'.")
+        if was_global and not args.quiet:
+            print(f"Global env updated to '{new}'.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Manage Codex CLI per-project environments")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -434,6 +466,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_resolve = sub.add_parser("resolve", help="Print the effective env name for the current directory")
     p_resolve.set_defaults(func=cmd_resolve)
+
+    p_rename = sub.add_parser("rename", help="Rename an existing environment")
+    p_rename.add_argument("old", help="Existing environment name")
+    p_rename.add_argument("new", help="New environment name")
+    p_rename.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    p_rename.set_defaults(func=cmd_rename)
 
     return parser
 

@@ -162,7 +162,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     # If ~/.codex is a real dir, migrate it to envs/global
     migrated = False
-    default_env = args.name or "global"
+    default_env = args.name or "system"
     target_env_dir = p.env_path(default_env)
     target_env_dir.mkdir(parents=True, exist_ok=True)
 
@@ -421,7 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_init = sub.add_parser("init", help="Initialize management and migrate existing '~/.codex' to an env")
-    p_init.add_argument("name", nargs="?", help="Name for the migrated/initial env (default: global)")
+    p_init.add_argument("name", nargs="?", help="Name for the migrated/initial env (default: system)")
     p_init.add_argument("--npm-install", action="store_true", help="Run 'npm install -g @openai/codex' after init")
     p_init.add_argument("--npm-binary", dest="npm_binary", help="npm binary to use (default: npm)")
     p_init.add_argument("--npm-package", dest="npm_package", help="package to install (default: @openai/codex)")

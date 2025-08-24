@@ -50,7 +50,7 @@ Note: Paths can be overridden with env vars: `CODEXENV_ROOT` (default `~/.codex-
 
 ## Commands
 
-- `codexenv init [name] [--npm-install] [--npm-binary npm] [--npm-package @openai/codex] [--force-npm]`: Initialize management. Migrates an existing `~/.codex` into env `[name]` (default `global`), sets it as global, and makes `~/.codex` a symlink. With `--npm-install`, runs `npm install -g @openai/codex` (configurable via flags/env vars). You can choose any name; if you later change your mind, use `codexenv rename`.
+- `codexenv init [name] [--npm-install] [--npm-binary npm] [--npm-package @openai/codex] [--force-npm]`: Initialize management. Migrates an existing `~/.codex` into env `[name]` (default `system`), sets it as global, and makes `~/.codex` a symlink. With `--npm-install`, runs `npm install -g @openai/codex` (configurable via flags/env vars). You can choose any name; if you later change your mind, use `codexenv rename`.
 - `codexenv list`: List environments; `*` marks the env active for the current directory.
 - `codexenv global [name]`: Show or set the global env.
 - `codexenv local [name] [--unset] [--apply]`: Show or set `.codexenv-local` in the current directory; `--apply` immediately updates `~/.codex`.

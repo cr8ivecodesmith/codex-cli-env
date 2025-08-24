@@ -230,6 +230,18 @@ def test_init_with_custom_name_sets_global_and_creates_env(monkeypatch, temp_env
     assert p.env_path("myenv").exists()
 
 
+def test_init_default_name_is_system(monkeypatch, temp_env, codexenv_mod):
+    # Avoid symlink dependency
+    monkeypatch.setattr(codexenv_mod, "update_codex_symlink", lambda p, name, quiet=False: 0)
+    class Args: pass
+    args = Args(); args.name = None; args.npm_install = False; args.npm_binary = None; args.npm_package = None; args.force_npm = False
+    rc = codexenv_mod.cmd_init(args)
+    assert rc == 0
+    p = temp_env
+    assert codexenv_mod.read_global_env(p) == "system"
+    assert p.env_path("system").exists()
+
+
 @pytest.mark.parametrize(
     "state, expected",
     [

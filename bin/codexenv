@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import sys
+import shutil
+import subprocess
+from pathlib import Path
+
+
+APP_NAME = "codexenv"
+
+
+def expand(path: str) -> Path:
+    # Do not resolve symlinks here; callers may need to detect them.
+    return Path(os.path.expandvars(os.path.expanduser(path))).absolute()
+
+
+def getenv(name: str, default: str) -> str:
+    v = os.environ.get(name)
+    return v if v is not None else default
+
+
+class Paths:
+    def __init__(self, cwd: Path | None = None) -> None:
+        # Allow override for testing
+        self.root_dir = expand(getenv("CODEXENV_ROOT", "~/.codex-cli-env"))
+        self.envs_dir = self.root_dir / "envs"
+        # Path where Codex CLI stores its files
+        self.codex_home = expand(getenv("CODEXENV_CODEX_HOME", "~/.codex"))
+        self.global_file = self.root_dir / "global"
+        self.cwd = cwd or Path.cwd()
+
+    def env_path(self, name: str) -> Path:
+        return self.envs_dir / name
+
+
+def ensure_dirs(p: Paths) -> None:
+    p.root_dir.mkdir(parents=True, exist_ok=True)
+    p.envs_dir.mkdir(parents=True, exist_ok=True)
+
+
+def which(prog: str) -> str | None:
+    from shutil import which as _which
+    return _which(prog)
+
+
+def codex_installed() -> bool:
+    return which("codex") is not None
+
+
+def npm_install_codex(npm_bin: str, package: str, force: bool = False) -> int:
+    if not force and codex_installed():
+        return 0
+    cmd = [npm_bin, "install", "-g", package]
+    try:
+        print(f"Running: {' '.join(cmd)}")
+        proc = subprocess.run(cmd, check=False)
+        if proc.returncode != 0:
+            print(
+                f"{APP_NAME}: npm install failed with exit code {proc.returncode}. Ensure network and npm permissions.",
+                file=sys.stderr,
+            )
+        return proc.returncode
+    except FileNotFoundError:
+        print(f"{APP_NAME}: npm not found. Please install Node.js/npm or pass --npm-binary.", file=sys.stderr)
+        return 127
+
+
+def read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+
+
+def write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def list_envs(p: Paths) -> list[str]:
+    if not p.envs_dir.exists():
+        return []
+    return sorted([d.name for d in p.envs_dir.iterdir() if d.is_dir()])
+
+
+def resolve_local_env_name(start_dir: Path) -> tuple[str | None, Path | None]:
+    """Search upwards for a .codexenv-local file and return (name, path)."""
+    cur = start_dir
+    root = Path(cur.root)
+    while True:
+        marker = cur / ".codexenv-local"
+        if marker.exists():
+            try:
+                name = marker.read_text(encoding="utf-8").strip()
+                return (name or None, marker)
+            except Exception:
+                return (None, marker)
+        if cur == cur.parent:
+            break
+        cur = cur.parent
+    return (None, None)
+
+
+def read_global_env(p: Paths) -> str | None:
+    return read_text(p.global_file)
+
+
+def write_global_env(p: Paths, name: str) -> None:
+    write_text(p.global_file, name)
+
+
+def current_effective_env(p: Paths) -> str | None:
+    local, _ = resolve_local_env_name(p.cwd)
+    if local:
+        return local
+    return read_global_env(p)
+
+
+def symlink_points_to(link: Path, target: Path) -> bool:
+    try:
+        return link.is_symlink() and link.resolve() == target.resolve()
+    except FileNotFoundError:
+        return False
+
+
+def update_codex_symlink(p: Paths, env_name: str, quiet: bool = False) -> int:
+    env_dir = p.env_path(env_name)
+    if not env_dir.exists():
+        if not quiet:
+            print(f"{APP_NAME}: env '{env_name}' does not exist: {env_dir}", file=sys.stderr)
+        return 2
+
+    # Only manage symlink; avoid clobbering a real directory unless explicitly requested elsewhere
+    if p.codex_home.exists() and not p.codex_home.is_symlink():
+        if not quiet:
+            print(
+                f"{APP_NAME}: refusing to replace non-symlink '{p.codex_home}'. Run '{APP_NAME} init' to migrate.",
+                file=sys.stderr,
+            )
+        return 3
+
+    # If symlink already correct, nothing to do
+    if symlink_points_to(p.codex_home, env_dir):
+        return 0
+
+    # Replace existing symlink if present
+    try:
+        if p.codex_home.is_symlink() or p.codex_home.exists():
+            p.codex_home.unlink()
+        os.symlink(env_dir, p.codex_home)
+        return 0
+    except Exception as e:
+        if not quiet:
+            print(f"{APP_NAME}: failed to update symlink {p.codex_home} -> {env_dir}: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+
+    # If ~/.codex is a real dir, migrate it to envs/global
+    migrated = False
+    default_env = args.name or "global"
+    target_env_dir = p.env_path(default_env)
+    target_env_dir.mkdir(parents=True, exist_ok=True)
+
+    if p.codex_home.exists() and not p.codex_home.is_symlink():
+        # Move contents into the env directory
+        for entry in p.codex_home.iterdir():
+            dest = target_env_dir / entry.name
+            if dest.exists():
+                # Avoid overwriting; keep existing
+                continue
+            if entry.is_dir():
+                shutil.move(str(entry), str(dest))
+            else:
+                shutil.move(str(entry), str(dest))
+        # Remove the now-empty directory
+        try:
+            p.codex_home.rmdir()
+        except OSError:
+            pass
+        migrated = True
+
+    # Ensure global is set
+    write_global_env(p, default_env)
+    rc = update_codex_symlink(p, default_env, quiet=False)
+    if rc == 0:
+        if migrated:
+            print(f"Initialized. Migrated existing '~/.codex' into env '{default_env}'.")
+        else:
+            print(f"Initialized. Using env '{default_env}'.")
+    # Optional npm install
+    if getattr(args, "npm_install", False):
+        npm_bin = getattr(args, "npm_binary", None) or getenv("CODEXENV_NPM", "npm")
+        pkg = getattr(args, "npm_package", None) or getenv("CODEXENV_NPM_PACKAGE", "@openai/codex")
+        npm_rc = npm_install_codex(npm_bin, pkg, force=getattr(args, "force_npm", False))
+        if rc == 0 and npm_rc != 0:
+            rc = npm_rc
+    return rc
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+    effective = current_effective_env(p)
+    envs = list_envs(p)
+    if not envs:
+        print("No environments found. Use 'codexenv init' or 'codexenv create <name>'.")
+        return 0
+    for name in envs:
+        prefix = "*" if name == effective else " "
+        print(f"{prefix} {name}")
+    return 0
+
+
+def cmd_global(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+    if args.name is None:
+        cur = read_global_env(p)
+        if cur:
+            print(cur)
+            return 0
+        print("(no global env set)")
+        return 0
+    # set global
+    name = args.name
+    if name not in list_envs(p):
+        print(f"{APP_NAME}: env '{name}' does not exist. Create it with '{APP_NAME} create {name}'.", file=sys.stderr)
+        return 2
+    write_global_env(p, name)
+    rc = update_codex_symlink(p, name, quiet=args.quiet)
+    if rc == 0 and not args.quiet:
+        print(f"Global env set to '{name}'.")
+    return rc
+
+
+def cmd_local(args: argparse.Namespace) -> int:
+    p = Paths()
+    if args.unset:
+        marker = p.cwd / ".codexenv-local"
+        if marker.exists():
+            marker.unlink()
+            print("Unset local env in this directory.")
+        else:
+            print("No local env file here.")
+        return 0
+
+    if args.name is None:
+        name, path = resolve_local_env_name(p.cwd)
+        if name:
+            print(f"{name}")
+        else:
+            print("(no local env)")
+        if args.verbose and path:
+            print(f"File: {path}")
+        return 0
+
+    # Set local
+    name = args.name
+    ensure_dirs(p)
+    if name not in list_envs(p):
+        print(
+            f"{APP_NAME}: env '{name}' does not exist. Create it with '{APP_NAME} create {name}'.",
+            file=sys.stderr,
+        )
+        return 2
+    marker = p.cwd / ".codexenv-local"
+    write_text(marker, name + "\n")
+    if not args.quiet:
+        print(f"Local env set to '{name}' in {p.cwd}.")
+    # Optionally update symlink immediately
+    if args.apply:
+        return update_codex_symlink(p, name, quiet=args.quiet)
+    return 0
+
+
+def cmd_create(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+    name = args.name
+    dest = p.env_path(name)
+    if dest.exists():
+        print(f"{APP_NAME}: env '{name}' already exists: {dest}")
+        return 0
+    dest.mkdir(parents=True, exist_ok=False)
+
+    # Optional cloning
+    if args.clone_from:
+        src = p.env_path(args.clone_from)
+        if not src.exists():
+            print(f"{APP_NAME}: source env '{args.clone_from}' does not exist.", file=sys.stderr)
+            return 2
+        # copytree requires dest to not exist; do a manual copy
+        for entry in src.iterdir():
+            s = entry
+            d = dest / entry.name
+            if entry.is_dir():
+                shutil.copytree(s, d)
+            else:
+                shutil.copy2(s, d)
+    if not args.quiet:
+        print(f"Created env '{name}' at {dest}.")
+    # Optional npm install
+    if getattr(args, "npm_install", False):
+        npm_bin = getattr(args, "npm_binary", None) or getenv("CODEXENV_NPM", "npm")
+        pkg = getattr(args, "npm_package", None) or getenv("CODEXENV_NPM_PACKAGE", "@openai/codex")
+        return npm_install_codex(npm_bin, pkg, force=getattr(args, "force_npm", False))
+    return 0
+
+
+def cmd_delete(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+    name = args.name
+    dest = p.env_path(name)
+    if not dest.exists():
+        print(f"{APP_NAME}: env '{name}' does not exist.", file=sys.stderr)
+        return 2
+
+    envs = list_envs(p)
+    if len(envs) == 1 and envs[0] == name:
+        if not args.yes:
+            print(
+                f"{APP_NAME}: refusing to delete the last env '{name}'. Re-run with --yes to move it back to '{p.codex_home}'.",
+                file=sys.stderr,
+            )
+            return 3
+        # Move back to ~/.codex (physical directory)
+        if p.codex_home.exists() and p.codex_home.is_symlink():
+            p.codex_home.unlink()
+        p.codex_home.mkdir(parents=True, exist_ok=True)
+        for entry in dest.iterdir():
+            target = p.codex_home / entry.name
+            if target.exists():
+                continue
+            if entry.is_dir():
+                shutil.move(str(entry), str(target))
+            else:
+                shutil.move(str(entry), str(target))
+        shutil.rmtree(dest)
+        if p.global_file.exists():
+            p.global_file.unlink()
+        print(f"Deleted last env '{name}' and restored files to '{p.codex_home}'.")
+        return 0
+
+    # If deleting active global, adjust global to some other env
+    global_name = read_global_env(p)
+    if global_name == name:
+        remaining = [e for e in envs if e != name]
+        new_global = remaining[0] if remaining else None
+        if new_global:
+            write_global_env(p, new_global)
+            update_codex_symlink(p, new_global, quiet=True)
+            if not args.quiet:
+                print(f"Global env switched to '{new_global}'.")
+
+    shutil.rmtree(dest)
+    if not args.quiet:
+        print(f"Deleted env '{name}'.")
+    return 0
+
+
+def cmd_apply_symlink(args: argparse.Namespace) -> int:
+    p = Paths()
+    ensure_dirs(p)
+    name = current_effective_env(p)
+    if not name:
+        if not args.quiet:
+            print("No effective env resolved (set global or local first).")
+        return 0
+    return update_codex_symlink(p, name, quiet=args.quiet)
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    p = Paths()
+    name = current_effective_env(p)
+    if name:
+        print(name)
+        return 0
+    return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=APP_NAME, description="Manage Codex CLI per-project environments")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_init = sub.add_parser("init", help="Initialize management and migrate existing '~/.codex' to an env")
+    p_init.add_argument("name", nargs="?", help="Name for the migrated/initial env (default: global)")
+    p_init.add_argument("--npm-install", action="store_true", help="Run 'npm install -g @openai/codex' after init")
+    p_init.add_argument("--npm-binary", dest="npm_binary", help="npm binary to use (default: npm)")
+    p_init.add_argument("--npm-package", dest="npm_package", help="package to install (default: @openai/codex)")
+    p_init.add_argument("--force-npm", action="store_true", help="Run npm install even if 'codex' is detected")
+    p_init.set_defaults(func=cmd_init)
+
+    p_list = sub.add_parser("list", help="List environments; '*' marks the active one for this directory")
+    p_list.set_defaults(func=cmd_list)
+
+    p_global = sub.add_parser("global", help="Show or set the global environment")
+    p_global.add_argument("name", nargs="?", help="Environment name to set as global")
+    p_global.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    p_global.set_defaults(func=cmd_global)
+
+    p_local = sub.add_parser("local", help="Show or set a .codexenv-local for this directory")
+    p_local.add_argument("name", nargs="?", help="Environment name to set locally")
+    p_local.add_argument("--apply", action="store_true", help="Apply symlink immediately to the selected env")
+    p_local.add_argument("--unset", action="store_true", help="Remove the local env file here")
+    p_local.add_argument("--verbose", action="store_true", help="Show file path if present when reading")
+    p_local.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    p_local.set_defaults(func=cmd_local)
+
+    p_create = sub.add_parser("create", help="Create a new environment directory")
+    p_create.add_argument("name", help="Name of the new environment")
+    p_create.add_argument("--clone-from", dest="clone_from", help="Clone files from an existing env")
+    p_create.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    p_create.add_argument("--npm-install", action="store_true", help="Run 'npm install -g @openai/codex' after creating the env")
+    p_create.add_argument("--npm-binary", dest="npm_binary", help="npm binary to use (default: npm)")
+    p_create.add_argument("--npm-package", dest="npm_package", help="package to install (default: @openai/codex)")
+    p_create.add_argument("--force-npm", action="store_true", help="Run npm install even if 'codex' is detected")
+    p_create.set_defaults(func=cmd_create)
+
+    p_delete = sub.add_parser("delete", help="Delete an environment")
+    p_delete.add_argument("name", help="Name of the environment to delete")
+    p_delete.add_argument("--yes", action="store_true", help="Confirm deletion (required for last env)")
+    p_delete.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    p_delete.set_defaults(func=cmd_delete)
+
+    p_apply = sub.add_parser("apply-symlink", help="Ensure '~/.codex' symlink matches the effective env")
+    p_apply.add_argument("--quiet", action="store_true", help="Suppress non-error output")
+    p_apply.set_defaults(func=cmd_apply_symlink)
+
+    p_resolve = sub.add_parser("resolve", help="Print the effective env name for the current directory")
+    p_resolve.set_defaults(func=cmd_resolve)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -10,18 +10,31 @@ Manage per-project Codex CLI accounts by switching `~/.codex` to named environme
 
 Quick setup:
 
-```
-# Clone into home (or move the folder there)
-git clone <this-repo-url> ~/.codex-cli-env
+**Clone into home (or move the folder there)**
 
-# Add to PATH for this shell session
-export PATH="$HOME/.codex-cli-env/bin:$PATH"
-
-# Optionally, persist it by adding the line above to your shell rc file
-#   Bash:   echo 'export PATH="$HOME/.codex-cli-env/bin:$PATH"' >> ~/.bashrc
-#   Zsh:    echo 'export PATH="$HOME/.codex-cli-env/bin:$PATH"' >> ~/.zshrc
 ```
-- Optional: Add shell integration so the correct env applies as you `cd`:
+git clone https://github.com/cr8ivecodesmith/codex-cli-env.git ~/.codex-cli-env
+```
+
+**Add to PATH**
+  - Bash:
+    ```
+    export PATH="$HOME/.codex-cli-env/bin:$PATH"
+    ```
+    or
+    ```
+    echo 'export PATH="$HOME/.codex-cli-env/bin:$PATH' >> ~/.bashrc
+    ```
+  - Fish:
+    ```
+    set PATH $HOME/.codex-cli-env/bin $PATH
+    ```
+    or
+    ```
+    echo 'set PATH $HOME/.codex-cli-env/bin $PATH' >> ~/.config/fish/config.fish
+    ```
+
+**Optional: Add shell integration so the correct env applies as you `cd`:**
   - Bash:
     ````
     echo 'source ~/.codex-cli-env/shell/codexenv.bash' >> ~/.bashrc

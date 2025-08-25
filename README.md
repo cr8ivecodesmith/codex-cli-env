@@ -72,6 +72,19 @@ Note: Paths can be overridden with env vars: `CODEXENV_ROOT` (default `~/.codex-
 - This tool can install `@openai/codex` globally when you pass `--npm-install`. Otherwise ensure Codex CLI is installed globally via npm.
 - Linux (and WSL) are the supported targets currently.
 
+## Limitations
+
+- One-instance: This is a symlink-management approach. Only one Codex CLI process should run at a time against `~/.codex`. Running multiple processes while switching environments can result in mixed credentials/config.
+- No mid-run switching: Do not change the active environment while a Codex CLI command is running (e.g., long streams). Switching repoints `~/.codex` mid-flight and may break the process.
+- Shell integration caveat: Auto-update on `cd` means new shells may pick a different env than an already-running process. Start Codex CLI processes from the directory that resolves to the intended env and avoid env flips during execution.
+- Concurrency: Parallel scripts across different projects can race on the shared `~/.codex` symlink. Prefer serial execution or isolate via separate users/containers.
+
+## Ideal Path Forward
+
+- Configurable Codex home: Upstream support for a custom `~/.codex` location (e.g., an env var/flag) would remove the need for symlinks.
+- First-class multi-auth: Native support for multiple accounts/profiles and per-project auth selection in the core Codex CLI.
+- With either (or both), this project can become a thin helper or be unnecessary.
+
 ## Testing
 
 Quick start for running tests locally without touching your real `~/.codex`:
